@@ -19,6 +19,20 @@ function SplitCsvLine {
     return [regex]::Split($line, $pattern)
 }
 
+function DetectNewLine {
+    param([byte[]]$bytes)
+
+    for ($i = 0; $i -lt $bytes.Length - 1; $i++) {
+        if ($bytes[$i] -eq 0x0D -and $bytes[$i + 1] -eq 0x0A) {
+            return "`r`n"  # CRLF
+        }
+        elseif ($bytes[$i] -eq 0x0A) {
+            return "`n"    # LF
+        }
+    }
+    return "`n"  # デフォルトは LF
+}
+
 # ファイル存在チェック
 if (-not (Test-Path $InputFile)) {
     Write-Error "Input file not found: $InputFile"
@@ -31,13 +45,18 @@ $folderPath = [System.IO.Path]::GetDirectoryName($InputFile)
 $inputExtension = [System.IO.Path]::GetExtension($InputFile)
 $OutputFile = [System.IO.Path]::Combine($folderPath, "${baseName}_${Mode}${inputExtension}")
 
-# UTF-8 BOM判定
+# ファイル読み込み（バイト単位）
 $bytes = [System.IO.File]::ReadAllBytes($InputFile)
+
+# UTF-8 BOM判定
 $hasBOM = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+
+# 改行コード検出（BOM除去後のバイト列で判定）
+$bytesToUse = if ($Encoding -eq "UTF-8" -and $hasBOM) { $bytes[3..($bytes.Length - 1)] } else { $bytes }
+$newLineChar = DetectNewLine -bytes $bytesToUse
 
 # リーダー取得
 if ($Encoding -eq "UTF-8") {
-    $bytesToUse = if ($hasBOM) { $bytes[3..($bytes.Length - 1)] } else { $bytes }
     $tempPath = [System.IO.Path]::GetTempFileName()
     [System.IO.File]::WriteAllBytes($tempPath, $bytesToUse)
     $reader = [System.IO.StreamReader]::new($tempPath, [System.Text.Encoding]::UTF8)
@@ -64,7 +83,7 @@ $reader.Close()
 # 対象カラム（0始まりに変換）
 $targetIndexes = $TargetColumns | ForEach-Object { $_ - 1 }
 
-# ライター取得
+# ライター取得（改行コードを設定）
 if ($Encoding -eq "UTF-8") {
     $utf8Encoding = if ($hasBOM) {
         [System.Text.Encoding]::UTF8
@@ -75,7 +94,9 @@ if ($Encoding -eq "UTF-8") {
 } else {
     $writer = [System.IO.StreamWriter]::new($OutputFile, $false, [System.Text.Encoding]::GetEncoding($Encoding))
 }
+$writer.NewLine = $newLineChar
 
+# 行ごとの処理
 foreach ($line in $linesToProcess) {
     $columns = SplitCsvLine -line $line -Separator $Separator
 
