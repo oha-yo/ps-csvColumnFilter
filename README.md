@@ -54,16 +54,17 @@ Shift_JISやUTF-8（BOMあり／なし）に対応し、クォート構造を保
 ## 使い方
 
 ```powershell
-
 .\exclude_item_csv.ps1 `
     -InputFile ".\testdata\test_sjis.csv" `
 	-StartRow 1 `
 	-TargetColumns 1,2,3 `
 	-Mode include
-
+```
+```powershell
 .\exclude_item_csv.ps1 `
 	-InputFile ".\testdata\test_utf8.csv" `
 	-StartRow 1 `
 	-Encoding utf-8 `
 	-TargetColumns 3 `
 	-Mode exclude
+```
