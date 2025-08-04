@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)][string]$InputFile,
-    [Parameter()][int]$StartRow = 2,
+    [Parameter()][int]$StartRow = 1,
     [Parameter()][int]$MaxRows = 0,
     [Parameter()][string]$Separator = ",",
     [Parameter()][string]$Encoding = "Shift_JIS",
@@ -10,20 +10,18 @@ param(
 )
 
 # 区切り文字の正規化
+# Powershellでは「タブ」を `t で表記するため
 switch ($Separator) {
     '\t' { $Separator = "`t" }
     '\\t' { $Separator = "`t" }
 }
 
+$escapedSeparator = [Regex]::Escape($Separator)
+$splitPattern = "$escapedSeparator(?=(?:[^""]*""[^""]*"")*[^""]*$)"
 
 function SplitCsvLine {
-    param(
-        [string]$line,
-        [string]$Separator
-    )
-    # クォートを保持したまま分割
-    $pattern = "$Separator(?=(?:[^""]*""[^""]*"")*[^""]*$)"
-    return [regex]::Split($line, $pattern)
+    param([string]$line)
+    return [regex]::Split($line, $splitPattern)
 }
 
 function DetectNewLine {
@@ -52,60 +50,73 @@ $folderPath = [System.IO.Path]::GetDirectoryName($InputFile)
 $inputExtension = [System.IO.Path]::GetExtension($InputFile)
 $OutputFile = [System.IO.Path]::Combine($folderPath, "${baseName}_${Mode}${inputExtension}")
 
-# ファイル読み込み（バイト単位）
-$bytes = [System.IO.File]::ReadAllBytes($InputFile)
+# BOM判定と改行コード検出（先頭数KBのみ読み込み）
+$fs = [System.IO.FileStream]::new($InputFile, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read)
+$buffer = New-Object byte[] 4096
+#$bytesRead = $fs.Read($buffer, 0, $buffer.Length)
+$fs.Close()
 
-# UTF-8 BOM判定
-$hasBOM = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+$hasBOM = ($buffer.Length -ge 3 -and $buffer[0] -eq 0xEF -and $buffer[1] -eq 0xBB -and $buffer[2] -eq 0xBF)
+$newLineChar = DetectNewLine -bytes $buffer
 
-# 改行コード検出（BOM除去後のバイト列で判定）
-$bytesToUse = if ($Encoding -eq "UTF-8" -and $hasBOM) { $bytes[3..($bytes.Length - 1)] } else { $bytes }
-$newLineChar = DetectNewLine -bytes $bytesToUse
-
-# リーダー取得
-if ($Encoding -eq "UTF-8") {
-    $tempPath = [System.IO.Path]::GetTempFileName()
-    [System.IO.File]::WriteAllBytes($tempPath, $bytesToUse)
-    $reader = [System.IO.StreamReader]::new($tempPath, [System.Text.Encoding]::UTF8)
+# エンコーディングオブジェクト生成
+$encodingObj = if ($Encoding -eq "UTF-8") {
+    New-Object System.Text.UTF8Encoding($true)
 } else {
-    $reader = [System.IO.StreamReader]::new($InputFile, [System.Text.Encoding]::GetEncoding($Encoding))
+    [System.Text.Encoding]::GetEncoding($Encoding)
 }
 
-# 開始行までスキップ
-$currentLineNumber = 0
-while (-not $reader.EndOfStream -and $currentLineNumber -lt ($StartRow - 1)) {
-    $reader.ReadLine() | Out-Null
-    $currentLineNumber++
+# リーダー取得（逐次読み込み）
+try {
+    $reader = [System.IO.StreamReader]::new($InputFile, $encodingObj)
+} catch [System.IO.FileNotFoundException] {
+    Write-Error "ファイルが見つかりません: $InputFile"
+}
+catch [System.UnauthorizedAccessException] {
+    Write-Error "ファイルにアクセスできません。権限を確認してください。"
+}
+catch {
+    Write-Error "その他のエラー: $_.Exception.Message"
 }
 
-# 最大行数分の読み込み
-$linesToProcess = [System.Collections.Generic.List[string]]::new()
-$maxToRead = if ($MaxRows -gt 0) { $MaxRows } else { [int]::MaxValue }
 
-while (-not $reader.EndOfStream -and $linesToProcess.Count -lt $maxToRead) {
-    $linesToProcess.Add($reader.ReadLine())
-}
-$reader.Close()
 
-# 対象カラム（0始まりに変換）
-$targetIndexes = $TargetColumns | ForEach-Object { $_ - 1 }
-
-# ライター取得（改行コードを設定）
-if ($Encoding -eq "UTF-8") {
-    $utf8Encoding = if ($hasBOM) {
+# ライター取得（改行コードを明示）
+$writerEncoding = if ($Encoding -eq "UTF-8") {
+    if ($hasBOM) {
         [System.Text.Encoding]::UTF8
     } else {
         New-Object System.Text.UTF8Encoding($false)
     }
-    $writer = [System.IO.StreamWriter]::new($OutputFile, $false, $utf8Encoding)
 } else {
-    $writer = [System.IO.StreamWriter]::new($OutputFile, $false, [System.Text.Encoding]::GetEncoding($Encoding))
+    [System.Text.Encoding]::GetEncoding($Encoding)
 }
+$writer = [System.IO.StreamWriter]::new($OutputFile, $false, $writerEncoding)
 $writer.NewLine = $newLineChar
 
-# 行ごとの処理
-foreach ($line in $linesToProcess) {
-    $columns = SplitCsvLine -line $line -Separator $Separator
+# 対象カラム（0始まりに変換）
+$targetIndexes = $TargetColumns | ForEach-Object { $_ - 1 }
+
+# 行処理開始
+$currentLineNumber = 0
+$linesWritten = 0
+$maxToRead = if ($MaxRows -gt 0) { $MaxRows } else { [int]::MaxValue }
+$ProgressInterval = 10000
+
+while (-not $reader.EndOfStream) {
+    $line = $reader.ReadLine()
+    $currentLineNumber++
+
+    if ($currentLineNumber -lt $StartRow) {
+        continue
+    }
+
+    if ($linesWritten -ge $maxToRead) {
+        break
+    }
+
+    #$columns = SplitCsvLine -line $line -Separator $Separator
+    $columns = SplitCsvLine -line $line
 
     $filtered = for ($i = 0; $i -lt $columns.Count; $i++) {
         $isTarget = $targetIndexes -contains $i
@@ -118,10 +129,18 @@ foreach ($line in $linesToProcess) {
         }
     }
 
-    # クォート構造を保持したまま出力
     $csvLine = $filtered -join $Separator
     $writer.WriteLine($csvLine)
+    
+    if ($linesWritten -ge $ProgressInterval -and $linesWritten % $ProgressInterval -eq 0) {
+        Write-Host "$linesWritten 行処理済み..."
+    }
+
+    $linesWritten++
 }
+
+$reader.Close()
 $writer.Close()
 
+Write-Host "出力行数: $linesWritten"
 Write-Host "${Mode} 処理後CSV出力完了: $OutputFile"

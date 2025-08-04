@@ -18,7 +18,7 @@ Shift_JISやUTF-8（BOMあり／なし）に対応し、クォート構造を保
 - ✅ 出力ファイル名自動生成（元ファイル名 + モード）
 
 ---
-## ⚙️ オプション一覧（詳細）
+## オプション一覧（詳細）
 
 | パラメータ        | 必須 | 型       | 説明 |
 |-------------------|------|----------|------|
@@ -32,7 +32,7 @@ Shift_JISやUTF-8（BOMあり／なし）に対応し、クォート構造を保
 
 ---
 
-### 🔍 補足
+### 補足
 
 - **カラム番号は1始まり**です（Excelと同じ感覚）。
 - **`StartRow` を 1 にするとヘッダーも処理対象になります**。
@@ -53,13 +53,17 @@ Shift_JISやUTF-8（BOMあり／なし）に対応し、クォート構造を保
 
 ## 使い方
 
+#### Shift_JISで書かれたcsvの1,3番目のカラムのみを取り出して以下ファイル名で出力する。
+#### .\testdata\test_sjis_include.csv
 ```powershell
 .\exclude_item_csv.ps1 `
     -InputFile ".\testdata\test_sjis.csv" `
 	-StartRow 1 `
-	-TargetColumns 1,2,3 `
+	-TargetColumns 1,3 `
 	-Mode include
 ```
+#### utf-8のcsvの3番目のカラムを除いた状態で以下ファイル名で出力する。
+#### .\testdata\test_utf8_exclude.csv
 ```powershell
 .\exclude_item_csv.ps1 `
 	-InputFile ".\testdata\test_utf8.csv" `
@@ -67,4 +71,14 @@ Shift_JISやUTF-8（BOMあり／なし）に対応し、クォート構造を保
 	-Encoding utf-8 `
 	-TargetColumns 3 `
 	-Mode exclude
+```
+#### Shift_JISで書かれたタブ区切りのファイルの場合
+#### .\testdata\test_tab_sjis_include.csv
+```powershell
+.\exclude_item_csv.ps1 `
+	-InputFile ".\testdata\test_tab_sjis.csv" `
+	-StartRow 1 `
+	-TargetColumns 1,2,3 `
+	-Mode include `
+	-Separator \t
 ```
