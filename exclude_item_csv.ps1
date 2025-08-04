@@ -9,6 +9,13 @@ param(
     [string]$Mode = "exclude"
 )
 
+# 区切り文字の正規化
+switch ($Separator) {
+    '\t' { $Separator = "`t" }
+    '\\t' { $Separator = "`t" }
+}
+
+
 function SplitCsvLine {
     param(
         [string]$line,
