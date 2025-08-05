@@ -9,6 +9,35 @@ param(
     [string]$Mode = "exclude"
 )
 
+# 実行履歴をスクリプトのカレントフォルダに追記（タイムスタンプ付き）
+try {
+    $scriptPath = $MyInvocation.MyCommand.Path
+    $scriptDir = [System.IO.Path]::GetDirectoryName($scriptPath)
+    $scriptName = [System.IO.Path]::GetFileNameWithoutExtension($MyInvocation.MyCommand.Name)
+    #Write-Host "scriptName: $scriptName.history "
+    $logFile = Join-Path $scriptDir "$scriptName.history"
+
+    $invocationLine = ".\" + [System.IO.Path]::GetFileName($scriptPath) + " " + ($MyInvocation.BoundParameters.GetEnumerator() | ForEach-Object {
+        $key = $_.Key
+        $value = if ($_.Value -is [Array]) {
+            $_.Value -join ','
+        } else {
+            $_.Value
+        }
+
+        if ($value -is [string] -and $value.Contains(' ')) {
+            "-$key `"$value`""
+        } else {
+            "-$key $value"
+        }
+    }) -join ' '
+
+    $timestamp = Get-Date -Format "[yyyy-MM-dd HH:mm:ss]"
+    Add-Content -Path $logFile -Value "$timestamp $invocationLine"
+} catch {
+    Write-Warning "ログファイルへの書き込みに失敗しました: $_"
+}
+
 # 区切り文字の正規化
 # Powershellでは「タブ」を `t で表記するため
 switch ($Separator) {
